@@ -1,9 +1,71 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { useNavigate } from 'react-router-dom';
 import { useStore, selectAvailableCredit } from '../store/store';
 import type { Persona } from '../store/types';
 import { GUIDED_STEPS, GUIDED_TRADE_FIXTURES, getStepByKey } from '../modules/demoFixtures';
+import { CLOCK_PRESETS, describeShift, fmtClock, fmtClockLong } from '../modules/demoClock';
+
+// ── Demo clock control ────────────────────────────────────────────
+
+/**
+ * A labelled demonstration control. The clock is stored as an offset from
+ * real time, so it keeps advancing and survives a refresh, while presets
+ * land exactly on a chosen point relative to the 17:00 UTC cutoff.
+ * Reminder state derives from this clock, keeping the walkthrough
+ * reproducible instead of dependent on when it is run.
+ */
+function DemoClock() {
+  const offset = useStore((s) => s.demoClockOffsetMs);
+  const setPreset = useStore((s) => s.setDemoClockPreset);
+  const resetClock = useStore((s) => s.resetDemoClock);
+
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const shift = describeShift(offset);
+  const demoMs = now + offset;
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-xs text-slate-400">Demo clock:</span>
+      <span
+        className="tabnum rounded bg-slate-800 px-2 py-0.5 text-xs font-medium text-amber-300"
+        title={fmtClockLong(demoMs)}
+      >
+        {fmtClock(demoMs)}
+      </span>
+      {shift && <span className="text-[10px] text-slate-500">({shift})</span>}
+
+      {CLOCK_PRESETS.map((p) => (
+        <button
+          key={p.key}
+          onClick={() => setPreset(p.key)}
+          title={p.description}
+          className="btn btn-sm bg-slate-700 text-slate-200 hover:bg-slate-600"
+        >
+          {p.label}
+        </button>
+      ))}
+      <button
+        onClick={resetClock}
+        disabled={offset === 0}
+        title="Return the demo clock to real time"
+        className={clsx(
+          'btn btn-sm',
+          offset === 0
+            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+            : 'bg-slate-600 text-white hover:bg-slate-500',
+        )}
+      >
+        ↺ Reset demo clock
+      </button>
+    </div>
+  );
+}
 
 const PERSONAS: { value: Persona; label: string; abbrev: string; color: string }[] = [
   { value: 'fund-trader',      label: 'Fund Trader',       abbrev: 'FT',  color: 'bg-emerald-600' },
@@ -24,6 +86,9 @@ function GuidedPanel() {
   const approveBatch       = useStore((s) => s.approveBatch);
   const verifyPayment      = useStore((s) => s.verifyPayment);
   const createBatch        = useStore((s) => s.createBatch);
+  const addPaymentRef      = useStore((s) => s.addPaymentReference);
+  const setDemoClockPreset = useStore((s) => s.setDemoClockPreset);
+  const setReminderFocus   = useStore((s) => s.setReminderFocus);
   const batches            = useStore((s) => s.batches);
   const trades             = useStore((s) => s.trades);
   const available          = useStore(selectAvailableCredit);
@@ -62,9 +127,92 @@ function GuidedPanel() {
     advanceGuidedStep();
   };
 
+  /**
+   * Step 5 — put the clock one hour before cutoff so the due-soon reminder
+   * becomes active, then hand the user to the bell. Nothing is navigated:
+   * the point of the step is that the reminder itself drives the journey.
+   */
+  const handleReminderStep = () => {
+    setPersona('fund-operations');
+    setDemoClockPreset('one-hour-before');
+    addNotification({
+      type: 'warning',
+      title: 'Settlement reminder raised',
+      message: 'Open the notification bell — 3 unbatched trades need settlement before 17:00 UTC.',
+    });
+    advanceGuidedStep();
+  };
+
+  /**
+   * Step 6 — follow the reminder's own primary action, applying the same
+   * filters and highlights the drawer would.
+   */
   const handleSettlementsStep = () => {
     setPersona('fund-operations');
+    const eligible = trades.filter(
+      (t) => t.batchId === null && t.settlementStatus === 'unsettled' && !t.reconciliationReserved,
+    );
+    setReminderFocus({
+      filters: {
+        assignment: 'unbatched',
+        settlementStatus: 'unsettled',
+        legalEntity: eligible[0]?.legalEntity ?? 'all',
+        counterparty: eligible[0]?.counterparty ?? 'all',
+      },
+      highlightTradeIds: eligible.map((t) => t.id),
+    });
     navigate('/settlements');
+    advanceGuidedStep();
+  };
+
+  /** Step 8 — show the approver their reminder before they act on it. */
+  const handleApprovalReminderStep = () => {
+    setPersona('fund-approver');
+    const pending = batches.find((b) => b.status === 'pending-approval');
+    addNotification({
+      type: 'info',
+      title: 'Approval reminder raised',
+      message: pending
+        ? `Open the bell — batch ${pending.id} requires independent approval.`
+        : 'Open the bell to see the approval reminder.',
+    });
+    advanceGuidedStep();
+  };
+
+  /** Step 10 — back to Fund Operations to see the payment-due reminder. */
+  const handlePaymentReminderStep = () => {
+    setPersona('fund-operations');
+    addNotification({
+      type: 'warning',
+      title: 'Payment-due reminder raised',
+      message: 'Open the bell — the outstanding USDC amount and due time are shown.',
+    });
+    advanceGuidedStep();
+  };
+
+  /**
+   * Step 11 — report a reference without verifying it. This deliberately
+   * does not settle anything: it demonstrates that a reported reference is
+   * not proof of receipt.
+   */
+  const handlePayRefStep = () => {
+    setPersona('fund-operations');
+    const target = batches.find((b) =>
+      ['awaiting-payment', 'partially-settled'].includes(b.status),
+    );
+    if (!target) { addNotification({ type: 'error', title: 'No batch awaiting payment' }); return; }
+    const usdcPay = target.obligations.find(
+      (o) => o.asset === 'USDC' && o.direction === 'pay' && o.status !== 'complete',
+    );
+    if (!usdcPay) { addNotification({ type: 'error', title: 'No outstanding USDC obligation' }); return; }
+
+    const result = addPaymentRef(target.id, usdcPay.id, 'TXN-DEMO-001');
+    if (!result.ok) { addNotification({ type: 'error', title: result.reason ?? 'Failed' }); return; }
+    addNotification({
+      type: 'info',
+      title: 'Payment reported — awaiting verification',
+      message: 'Reference TXN-DEMO-001 recorded. Not proof of receipt: nothing is settled yet.',
+    });
     advanceGuidedStep();
   };
 
@@ -134,10 +282,16 @@ function GuidedPanel() {
             Attempt Blocked Trade (800,000 USDC, only {available.toLocaleString()} available)
           </button>
         );
+      case 'step-reminder':
+        return (
+          <button onClick={handleReminderStep} className="btn btn-sm bg-amber-600 text-white hover:bg-amber-500">
+            Set clock to one hour before cutoff → raise reminder
+          </button>
+        );
       case 'step-settlements':
         return (
           <button onClick={handleSettlementsStep} className="btn btn-sm bg-blue-600 text-white hover:bg-blue-700">
-            → Go to Settlements (as Fund Operations)
+            Review trades (opens filtered Trades view)
           </button>
         );
       case 'step-batch': {
@@ -150,10 +304,28 @@ function GuidedPanel() {
           </button>
         );
       }
+      case 'step-approve-reminder':
+        return (
+          <button onClick={handleApprovalReminderStep} className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700">
+            Switch to Fund Approver → show approval reminder
+          </button>
+        );
       case 'step-approve':
         return (
           <button onClick={handleApproveStep} className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700">
             Approve Batch (as Fund Approver)
+          </button>
+        );
+      case 'step-payment-reminder':
+        return (
+          <button onClick={handlePaymentReminderStep} className="btn btn-sm bg-amber-600 text-white hover:bg-amber-500">
+            Switch to Fund Operations → show payment reminder
+          </button>
+        );
+      case 'step-pay-ref':
+        return (
+          <button onClick={handlePayRefStep} className="btn btn-sm bg-slate-600 text-white hover:bg-slate-500">
+            Report payment reference TXN-DEMO-001 (not verified)
           </button>
         );
       case 'step-pay1':
@@ -311,7 +483,7 @@ export function DemoToolbar() {
                 onClick={exitGuidedMode}
                 className="btn btn-sm bg-slate-600 text-white hover:bg-slate-500"
               >
-                ✕ Exit Guided Mode
+                ✕ Return to streaming mode
               </button>
             )}
 
@@ -370,6 +542,13 @@ export function DemoToolbar() {
             {expanded ? '▾ collapse' : '▴ expand'}
           </button>
         </div>
+
+        {/* Demo clock — labelled demonstration control */}
+        {expanded && (
+          <div className="mt-2 border-t border-slate-700 pt-2">
+            <DemoClock />
+          </div>
+        )}
 
         {/* Guided walkthrough panel */}
         {expanded && demoMode === 'guided' && <GuidedPanel />}

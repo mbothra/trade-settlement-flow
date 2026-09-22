@@ -251,9 +251,12 @@ export type GuidedStepKey =
   | 'step-sell-btc'
   | 'step-blocked'
   | 'step-settlements'
+  | 'step-reminder'
   | 'step-batch'
   | 'step-submit'
+  | 'step-approve-reminder'
   | 'step-approve'
+  | 'step-payment-reminder'
   | 'step-pay-ref'
   | 'step-pay1'
   | 'step-pay2'
@@ -287,9 +290,29 @@ export interface TradeFilters {
 }
 
 // ----------------------------------------------------------
+// Reminder / notification-centre UI state
+//
+// Reminders themselves are DERIVED (see modules/reminders.ts) — never
+// stored — so re-renders, persona switches and refreshes cannot produce
+// duplicates. The only persisted reminder state is which reminder ids the
+// user has marked read, plus a pending navigation intent handed from a
+// reminder's primary action to the target screen.
+// ----------------------------------------------------------
+export interface ReminderFocus {
+  /** Filters to apply when the Trades tab mounts. */
+  filters?: Partial<TradeFilters>;
+  /** Trade refs to highlight on arrival. */
+  highlightTradeIds?: string[];
+  /** Scroll the batch detail to the payment section. */
+  scrollToPayments?: boolean;
+  /** Invalidated on reset so a stale intent is never replayed. */
+  issuedAt: number;
+}
+
+// ----------------------------------------------------------
 // Full app state (persisted)
 // ----------------------------------------------------------
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export interface AppState {
   trades: Trade[];
@@ -307,6 +330,13 @@ export interface AppState {
   blockedTradeAttempted: boolean;
 
   notifications: AppNotification[];
+
+  /** Reminder ids the user marked read. Never resolves an obligation. */
+  readReminderIds: string[];
+  /** One-shot navigation intent from a reminder's primary action. */
+  reminderFocus: ReminderFocus | null;
+  /** Demo clock offset from real time, in ms. Zero = real time. */
+  demoClockOffsetMs: number;
 
   /** New run ID on every reset — late events from an old run are ignored. */
   demoRunId: string;

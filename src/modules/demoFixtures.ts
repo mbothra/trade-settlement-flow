@@ -95,26 +95,46 @@ export const GUIDED_STEPS: GuidedStep[] = [
     requiredPersona: 'fund-trader',
   },
   {
-    key: 'step-settlements',
-    title: 'Step 5 — View Settlements',
+    key: 'step-reminder',
+    title: 'Step 5 — Settlement reminder appears',
     description:
-      'Navigate to Settlements → Trades. All three trades are Unbatched and Unsettled; no batches exist yet.',
+      'Set the demo clock to one hour before the 17:00 UTC cutoff. The notification bell shows ' +
+      '"3 unbatched trades need settlement today. Cutoff is 17:00 UTC." ' +
+      'Click "Review trades" in the drawer to open Settlements → Trades with the filters already applied.',
+    screen: 'trading',
+    requiredPersona: 'fund-operations',
+  },
+  {
+    key: 'step-settlements',
+    title: 'Step 6 — Filtered trades view',
+    description:
+      'Settlements → Trades opened from the reminder: the Unbatched filter is active, the entity and ' +
+      'counterparty are scoped, and the three relevant trades are highlighted.',
     screen: 'settlements',
     requiredPersona: 'fund-operations',
   },
   {
     key: 'step-batch',
-    title: 'Step 6 — Create and submit batch',
+    title: 'Step 7 — Create and submit batch',
     description:
-      'Select all three trades, then click "Batch all eligible" and choose "Create and submit for approval". ' +
+      'Select the eligible trades and create the batch. ' +
       'Net obligations preview: pay 940,000 USDC; receive 8 BTC and 100 ETH. ' +
-      'One independent approver is required — Northstar Capital policy.',
+      'Submitting sends it for independent approval — one approver is required by Northstar Capital policy.',
     screen: 'settlements',
     requiredPersona: 'fund-operations',
   },
   {
+    key: 'step-approve-reminder',
+    title: 'Step 8 — Approval reminder',
+    description:
+      'Switch to Fund Approver. The bell now shows "Batch approval required" with the settlement due time. ' +
+      'Fund Operations sees only "Awaiting approval from Alex Chen" — the submitter cannot approve their own batch.',
+    screen: 'settlements',
+    requiredPersona: 'fund-approver',
+  },
+  {
     key: 'step-approve',
-    title: 'Step 7 — Approve batch',
+    title: 'Step 9 — Approve batch',
     description:
       'Fund Approver reviews the net obligations and approves the batch. ' +
       'This records agreement on the amounts; it does not execute any payment.',
@@ -122,35 +142,57 @@ export const GUIDED_STEPS: GuidedStep[] = [
     requiredPersona: 'fund-approver',
   },
   {
-    key: 'step-pay1',
-    title: 'Step 8 — Verify 470,000 USDC',
+    key: 'step-payment-reminder',
+    title: 'Step 10 — Payment-due reminder',
     description:
-      'Simulate receipt of the first partial USDC payment (470,000 USDC). Trade TRD-0001 (Buy 10 BTC) moves to Partially Settled.',
+      'Back as Fund Operations, the bell shows "Payment due — 940,000.00 USDC remains outstanding" ' +
+      'with the exact due time. The primary action opens the batch at the payment section.',
+    screen: 'settlements',
+    requiredPersona: 'fund-operations',
+  },
+  {
+    key: 'step-pay-ref',
+    title: 'Step 11 — Report a payment reference',
+    description:
+      'Report reference TXN-DEMO-001 against the USDC obligation. The reminder becomes ' +
+      '"Payment reported — awaiting verification" and the "Make payment" action is withdrawn. ' +
+      'A reported reference is not proof of receipt: nothing settles and no credit is released.',
+    screen: 'settlements',
+    requiredPersona: 'fund-operations',
+  },
+  {
+    key: 'step-pay1',
+    title: 'Step 12 — Verify 470,000 USDC',
+    description:
+      'Simulate verified receipt of the first partial USDC payment (470,000 USDC). ' +
+      'The reminder becomes "Partial settlement" showing 470,000 of 940,000 verified.',
     screen: 'settlements',
     requiredPersona: 'fund-operations',
   },
   {
     key: 'step-pay2',
-    title: 'Step 9 — Verify remaining 470,000 USDC',
+    title: 'Step 13 — Verify remaining 470,000 USDC',
     description:
-      'Verify the remaining 470,000 USDC. USDC obligation is complete, but BTC and ETH remain outstanding.',
+      'Verify the remaining 470,000 USDC. Your pay side is complete, so the reminder becomes ' +
+      '"Your payment is complete — waiting for Wintermute". You are not asked to pay again.',
     screen: 'settlements',
     requiredPersona: 'fund-operations',
   },
   {
     key: 'step-receive-btc',
-    title: 'Step 10 — Verify receipt of 8 BTC',
+    title: 'Step 14 — Verify receipt of 8 BTC',
     description:
-      'Verify that 8 BTC have been received on the Bitcoin network.',
+      'Verify that 8 BTC have been received on the Bitcoin network. 100 ETH remains inbound.',
     screen: 'settlements',
     requiredPersona: 'fund-operations',
   },
   {
     key: 'step-receive-eth',
-    title: 'Step 11 — Verify receipt of 100 ETH',
+    title: 'Step 15 — Verify receipt of 100 ETH',
     description:
-      'Verify receipt of 100 ETH. All obligations are now covered — the batch settles automatically, ' +
-      'reconciliation completes, and available credit is restored to 2,000,000 USDC.',
+      'Verify receipt of 100 ETH. All obligations are now covered — the batch reconciles and settles ' +
+      'automatically, active reminders clear into resolved history, and available credit is restored ' +
+      'to 2,000,000 USDC.',
     screen: 'settlements',
     requiredPersona: 'fund-operations',
   },
@@ -158,8 +200,8 @@ export const GUIDED_STEPS: GuidedStep[] = [
     key: 'step-done',
     title: 'Walkthrough complete',
     description:
-      'Settlement complete. Credit returned to 2,000,000 USDC automatically. ' +
-      'Return to Trading to execute the previously blocked order.',
+      'Settlement complete. Credit returned to 2,000,000 USDC automatically. Open the bell to see ' +
+      'active reminders cleared and the resolved history preserved.',
     screen: 'settlements',
   },
 ];

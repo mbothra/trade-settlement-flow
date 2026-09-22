@@ -30,7 +30,11 @@ import { initialPrices, resetPrices }                 from '../modules/priceSimu
 import { nextStepKey, GUIDED_TRADE_FIXTURES }         from '../modules/demoFixtures';
 import { computeAvailableCredit, computeUsedCredit, utilisationRatio, APPROVED_LIMIT } from '../modules/creditPolicy';
 import { deriveTradeStatuses }                        from '../modules/tradeAllocation';
-import type { Asset, Network }                        from './types';
+import { cutoffFor, demoNow, offsetForPreset }        from '../modules/demoClock';
+import { deriveReminders }                            from '../modules/reminders';
+import type { ClockPreset }                           from '../modules/demoClock';
+import type { DerivedReminders }                      from '../modules/reminders';
+import type { Asset, Network, ReminderFocus }         from './types';
 
 // ────────────────────────────────────────────────────────────────
 // Constants
@@ -56,11 +60,12 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
-function settlementDue(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + 1);
-  d.setUTCHours(10, 0, 0, 0);
-  return d.toISOString();
+/**
+ * A batch is due at the next 17:00 UTC settlement cutoff, measured on the
+ * DEMO clock so the guided walkthrough stays deterministic.
+ */
+function settlementDue(offsetMs: number): string {
+  return cutoffFor(demoNow(offsetMs));
 }
 
 function uid(): string {
@@ -112,6 +117,9 @@ function makeInitialState(): AppState {
     guidedStepKey: 'step-buy-btc',
     blockedTradeAttempted: false,
     notifications: [],
+    readReminderIds:   [],
+    reminderFocus:     null,
+    demoClockOffsetMs: 0,
     demoRunId:     uid(),
     _nextTradeNum: 1,
     _nextBatchNum: 1,
@@ -144,7 +152,7 @@ function makeEvent(
 // Batch helpers
 // ────────────────────────────────────────────────────────────────
 
-function makeBatchSkeleton(batchId: string, now: string): SettlementBatch {
+function makeBatchSkeleton(batchId: string, now: string, clockOffsetMs: number): SettlementBatch {
   return {
     id: batchId,
     name: null,
@@ -154,7 +162,7 @@ function makeBatchSkeleton(batchId: string, now: string): SettlementBatch {
     counterparty: COUNTERPARTY,
     settlementWindow: SETTLEMENT_WINDOW,
     nettingArrangement: NETTING_ARRANGEMENT,
-    dueTime: settlementDue(),
+    dueTime: settlementDue(clockOffsetMs),
     tradeIds: [],
     sealedTradeIds: null,
     obligations: [],
@@ -300,6 +308,24 @@ export interface AppActions {
   // Notifications
   addNotification:    (n: Omit<AppNotification, 'id' | 'timestamp'>) => void;
   dismissNotification:(id: string) => void;
+
+  // ── Reminders / notification centre ───────────────────────────
+  /**
+   * Mark a reminder read. This is presentation-only: it never mutates
+   * trade, batch, approval, payment or dispute state, so the underlying
+   * obligation stays in its action queue.
+   */
+  markReminderRead:    (reminderId: string) => void;
+  markAllRemindersRead:(reminderIds: string[]) => void;
+  markReminderUnread:  (reminderId: string) => void;
+
+  /** Hand a navigation intent to the target screen (filters, highlights). */
+  setReminderFocus:   (focus: Omit<ReminderFocus, 'issuedAt'> | null) => void;
+  clearReminderFocus: () => void;
+
+  // ── Demo clock ────────────────────────────────────────────────
+  setDemoClockPreset: (preset: ClockPreset) => void;
+  resetDemoClock:     () => void;
 
   // Reset
   resetDemo: () => void;
@@ -557,7 +583,7 @@ export const useStore = create<AppState & AppActions>()(
           : `Batch created with ${tradeIds.length} trade${tradeIds.length !== 1 ? 's' : ''}`;
 
         const newBatch: SettlementBatch = {
-          ...makeBatchSkeleton(batchId, now),
+          ...makeBatchSkeleton(batchId, now, state.demoClockOffsetMs),
           name:           options.name ?? null,
           status:         submitNow ? 'pending-approval' : 'needs-review',
           tradeIds:       [...tradeIds],
@@ -1130,6 +1156,9 @@ export const useStore = create<AppState & AppActions>()(
         const initial = makeInitialState();
         resetPrices();
         const now = isoNow();
+        // Keep whatever demo-clock position the user has set so the
+        // scenario's reminders line up with the clock on screen.
+        const clockOffsetMs = get().demoClockOffsetMs;
 
         const t1: Trade = {
           ...buildTrade('TRD-0001', 'BTC/USDC', 'buy', 10, 80000, 800000),
@@ -1152,7 +1181,7 @@ export const useStore = create<AppState & AppActions>()(
         const batchObligations = computeNetObligations([t1, t2], 'STLBATCH-001-OBL', 1);
 
         const batch: SettlementBatch = {
-          ...makeBatchSkeleton('STLBATCH-001', now),
+          ...makeBatchSkeleton('STLBATCH-001', now, clockOffsetMs),
           tradeIds:   batchTradeIds,
           obligations: batchObligations,
           revisionHistory: [
@@ -1173,6 +1202,7 @@ export const useStore = create<AppState & AppActions>()(
           _nextBatchNum: 2,
           prices:        initialPrices(),
           demoRunId:     uid(),
+          demoClockOffsetMs: clockOffsetMs,
         });
       },
 
@@ -1194,15 +1224,67 @@ export const useStore = create<AppState & AppActions>()(
         }));
       },
 
+      // ── Reminders ───────────────────────────────────────────────
+      //
+      // Read state is a set of derived reminder ids and nothing more.
+      // Marking read is deliberately inert with respect to settlement:
+      // the obligation, its batch and its action queue are untouched.
+
+      markReminderRead(reminderId) {
+        set((state) =>
+          state.readReminderIds.includes(reminderId)
+            ? state
+            : { readReminderIds: [...state.readReminderIds, reminderId] },
+        );
+      },
+
+      markAllRemindersRead(reminderIds) {
+        set((state) => {
+          const merged = new Set(state.readReminderIds);
+          reminderIds.forEach((id) => merged.add(id));
+          return { readReminderIds: [...merged] };
+        });
+      },
+
+      markReminderUnread(reminderId) {
+        set((state) => ({
+          readReminderIds: state.readReminderIds.filter((id) => id !== reminderId),
+        }));
+      },
+
+      setReminderFocus(focus) {
+        set({ reminderFocus: focus ? { ...focus, issuedAt: Date.now() } : null });
+      },
+
+      clearReminderFocus() {
+        set({ reminderFocus: null });
+      },
+
+      // ── Demo clock ──────────────────────────────────────────────
+      //
+      // A labelled demonstration control, not authentication and not
+      // production scheduling. Reminder state is derived from this clock
+      // so the guided walkthrough is reproducible.
+
+      setDemoClockPreset(preset) {
+        set({ demoClockOffsetMs: offsetForPreset(preset, Date.now()) });
+      },
+
+      resetDemoClock() {
+        set({ demoClockOffsetMs: 0 });
+      },
+
       // ── Demo Reset ──────────────────────────────────────────────
 
       resetDemo() {
         resetPrices();
+        // makeInitialState() zeroes readReminderIds, reminderFocus and the
+        // demo clock, so reminders, history and clock state all clear.
         set(makeInitialState());
       },
     }),
     {
-      name: 'wm-node-demo-v3',  // bumped: auto-settle + submit-immediately flow
+      name: 'wm-node-demo-v4',  // bumped: notification centre + demo clock state added
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => {
         const { isExecuting, ...rest } = state as AppState & AppActions & { isExecuting: boolean };
@@ -1224,6 +1306,52 @@ export function selectAvailableCredit(state: AppState): number {
 
 export function selectUtilisation(state: AppState): number {
   return utilisationRatio(state.trades, state.batches);
+}
+
+// ── Reminder selectors ───────────────────────────────────────────
+
+/** Current demo time in ms — the clock every reminder is measured against. */
+export function selectDemoNow(state: AppState): number {
+  return demoNow(state.demoClockOffsetMs);
+}
+
+/** The active 17:00 UTC cutoff on the demo clock. */
+export function selectCutoff(state: AppState): string {
+  return cutoffFor(demoNow(state.demoClockOffsetMs));
+}
+
+/**
+ * The slice of state a reminder derivation depends on. Narrowed so callers
+ * can pass exactly these fields and memoise on them, and so nothing else
+ * can quietly become an input.
+ */
+export type ReminderStateSlice = Pick<
+  AppState,
+  'trades' | 'batches' | 'persona' | 'readReminderIds' | 'demoClockOffsetMs'
+>;
+
+/**
+ * Derive the reminder queue for the current persona.
+ *
+ * Pass an explicit `nowMs` when the caller already ticks a clock, so the
+ * whole render shares one instant (and memoises cleanly) rather than each
+ * call observing a slightly different Date.now().
+ */
+export function deriveRemindersForState(
+  state: ReminderStateSlice,
+  nowMs?: number,
+): DerivedReminders {
+  const now = nowMs ?? demoNow(state.demoClockOffsetMs);
+  return deriveReminders(
+    {
+      trades:  state.trades,
+      batches: state.batches,
+      nowMs:   now,
+      cutoffIso: cutoffFor(now),
+    },
+    state.persona,
+    state.readReminderIds,
+  );
 }
 
 export { APPROVED_LIMIT };

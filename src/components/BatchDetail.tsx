@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { useStore } from '../store/store';
+import { useStore, selectDemoNow } from '../store/store';
 import { StatusBadge, TradeStatusBadge } from './StatusBadge';
 import { obligationExplanation } from '../modules/netting';
+import { fmtDuration } from '../modules/reminders';
 import type { SettlementBatch, Obligation, Persona, Trade } from '../store/types';
 
 // ── Formatting ────────────────────────────────────────────────────
@@ -431,15 +432,39 @@ export function BatchDetail({ batchId }: { batchId: string }) {
   const removeFromBatch = useStore((s) => s.removeTradeFromBatch);
   const discardBatch    = useStore((s) => s.discardDraftBatch);
 
+  const reminderFocus      = useStore((s) => s.reminderFocus);
+  const clearReminderFocus = useStore((s) => s.clearReminderFocus);
+  const demoNowMs          = useStore(selectDemoNow);
+
   const [highlightedTradeIds,    setHighlightedTradeIds]    = useState<Set<string>>(new Set());
   const [showDiscrepancyModal,   setShowDiscrepancyModal]   = useState(false);
   const [showReturnModal,        setShowReturnModal]        = useState(false);
   const [viewedRevision,         setViewedRevision]         = useState<number | null>(null);
   const [actionError,            setActionError]            = useState('');
 
+  const paymentsRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     if (batch && viewedRevision === null) setViewedRevision(batch.revision);
   }, [batch?.id]);
+
+  /**
+   * A reminder whose action was "View outstanding payments" asks us to land
+   * on the payment section rather than the top of the page. Consumed once.
+   */
+  useEffect(() => {
+    if (!reminderFocus) return;
+    if (reminderFocus.scrollToPayments) {
+      // Defer to the paint after obligations render.
+      requestAnimationFrame(() => {
+        paymentsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+    if (reminderFocus.highlightTradeIds?.length) {
+      setHighlightedTradeIds(new Set(reminderFocus.highlightTradeIds));
+    }
+    clearReminderFocus();
+  }, [reminderFocus?.issuedAt]);
 
   if (!batch) {
     return (
@@ -511,6 +536,18 @@ export function BatchDetail({ batchId }: { batchId: string }) {
             <p className="text-sm text-slate-500 mt-0.5">
               {batch.legalEntity} ↔ {batch.counterparty} · {batch.settlementWindow} ·
               Rev {batch.revision} · Due {fmtDate(batch.dueTime)}
+              {(() => {
+                const isPast = demoNowMs > new Date(batch.dueTime).getTime();
+                const isActive = ['needs-review','pending-approval','awaiting-payment','partially-settled'].includes(batch.status);
+                if (!isPast || !isActive) return null;
+                const overdueMs = demoNowMs - new Date(batch.dueTime).getTime();
+                return (
+                  <span className="ml-2 inline-flex items-center gap-1 rounded border border-red-300 bg-red-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-red-800">
+                    <span aria-hidden>!</span>
+                    Overdue · {fmtDuration(overdueMs)} ago
+                  </span>
+                );
+              })()}
             </p>
           </div>
           <div className="flex flex-col items-end gap-1.5">
@@ -619,7 +656,7 @@ export function BatchDetail({ batchId }: { batchId: string }) {
         {/* Two-column: obligations + trades */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Obligations */}
-          <div className="space-y-3">
+          <div ref={paymentsRef} className="space-y-3">
             {payObls.length > 0 && (
               <div>
                 <h2 className="text-sm font-semibold text-slate-700 mb-2">You Pay</h2>

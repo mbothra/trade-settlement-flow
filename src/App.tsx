@@ -4,6 +4,7 @@ import { clsx } from 'clsx';
 import { Trading } from './pages/Trading';
 import { Settlements } from './pages/Settlements';
 import { DemoToolbar } from './components/DemoToolbar';
+import { NotificationCenter } from './components/NotificationCenter';
 import { ToastContainer } from './components/Toast';
 import { useStore } from './store/store';
 import { tickPrices, nextTickInterval } from './modules/priceSimulation';
@@ -116,9 +117,9 @@ export default function App() {
             <NavItem to="/settlements" label="Settlements" count={pendingCount} />
           </div>
 
-          {/* Right: persona indicator + demo label */}
-          <div className="ml-auto flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          {/* Right: persona indicator + notification centre */}
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
               <span>{
                 persona === 'fund-trader' ? 'Fund Trader' :
@@ -127,6 +128,7 @@ export default function App() {
                 'Provider Operations'
               }</span>
             </div>
+            <NotificationCenter />
           </div>
         </div>
       </nav>

@@ -5,7 +5,7 @@
  * Concept demo — simulated data.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/store';
@@ -207,6 +207,9 @@ export function TradesTab() {
   const trades  = useStore((s) => s.trades);
   const batches = useStore((s) => s.batches);
 
+  const reminderFocus     = useStore((s) => s.reminderFocus);
+  const clearReminderFocus = useStore((s) => s.clearReminderFocus);
+
   // Filters
   const [statusFilter,     setStatusFilter]     = useState<StatusFilter>('all');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all');
@@ -217,6 +220,31 @@ export function TradesTab() {
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showModal, setShowModal] = useState(false);
+
+  // Trades a reminder asked us to call out on arrival.
+  const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
+
+  /**
+   * Apply a reminder's navigation intent exactly once, then clear it so a
+   * later visit to this tab does not silently re-apply stale filters.
+   * Keyed on issuedAt so two consecutive clicks of the same reminder both
+   * take effect.
+   */
+  useEffect(() => {
+    if (!reminderFocus) return;
+    const f = reminderFocus.filters;
+    if (f) {
+      if (f.assignment === 'unbatched' || f.assignment === 'all') setAssignmentFilter(f.assignment);
+      if (f.settlementStatus) setStatusFilter(f.settlementStatus);
+      if (f.pair) setPairFilter(f.pair);
+      if (f.side) setSideFilter(f.side);
+      if (f.search !== undefined) setSearch(f.search);
+    }
+    if (reminderFocus.highlightTradeIds?.length) {
+      setHighlighted(new Set(reminderFocus.highlightTradeIds));
+    }
+    clearReminderFocus();
+  }, [reminderFocus?.issuedAt]);
 
   const pairs: TradingPair[] = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC'];
 
@@ -279,6 +307,24 @@ export function TradesTab() {
           selectedTrades={eligibleForBatching}
           onClose={() => { setShowModal(false); clearSelection(); }}
         />
+      )}
+
+      {/* Scope banner — shown when a reminder drove us here */}
+      {highlighted.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+          <p className="text-xs text-blue-900">
+            <strong>Opened from a settlement reminder.</strong>{' '}
+            {highlighted.size} trade{highlighted.size !== 1 ? 's' : ''} highlighted below
+            {assignmentFilter === 'unbatched' && ' · Unbatched filter active'}
+            {statusFilter === 'unsettled' && ' · Unsettled only'}
+          </p>
+          <button
+            onClick={() => setHighlighted(new Set())}
+            className="shrink-0 text-[11px] text-blue-700 hover:text-blue-900"
+          >
+            Clear highlight
+          </button>
+        </div>
       )}
 
       {/* Header row: filter chips + "Batch all eligible" action */}
@@ -408,7 +454,12 @@ export function TradesTab() {
                 return (
                   <tr
                     key={t.id}
-                    className={clsx(selected.has(t.id) && 'bg-[#00F55408]')}
+                    className={clsx(
+                      selected.has(t.id) && 'bg-[#00F55408]',
+                      // Reminder highlight — a left rule plus a "Due" marker
+                      // on the ref cell, so it is not colour-only.
+                      highlighted.has(t.id) && 'bg-blue-50/70 border-l-2 border-l-blue-400',
+                    )}
                   >
                     <td>
                       <input
@@ -418,7 +469,17 @@ export function TradesTab() {
                         className="cursor-pointer accent-wm-green"
                       />
                     </td>
-                    <td className="font-mono text-xs">{t.id}</td>
+                    <td className="font-mono text-xs">
+                      {t.id}
+                      {highlighted.has(t.id) && (
+                        <span
+                          className="ml-1.5 rounded bg-blue-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-blue-700"
+                          title="Flagged by a settlement reminder"
+                        >
+                          Due
+                        </span>
+                      )}
+                    </td>
                     <td className="text-xs tabnum text-slate-500">{fmtTs(t.timestamp)}</td>
                     <td className="font-medium text-xs">{t.pair}</td>
                     <td>
