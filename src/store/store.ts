@@ -1309,6 +1309,15 @@ export function selectUtilisation(state: AppState): number {
 }
 
 // ── Reminder selectors ───────────────────────────────────────────
+//
+// NOT for `useStore(selectX)`: both call Date.now() internally, so they
+// return a new value on every invocation. Zustand's useSyncExternalStore
+// re-invokes a selector to check for tearing, sees a "changed" snapshot
+// every time, and forces a synchronous re-render — which re-invokes it
+// again, forever ("Maximum update depth exceeded"). Read the raw
+// `demoClockOffsetMs` field with useStore and tick a local clock instead
+// (see NotificationCenter/BatchDetail); use these only outside React
+// render, e.g. inside deriveRemindersForState.
 
 /** Current demo time in ms — the clock every reminder is measured against. */
 export function selectDemoNow(state: AppState): number {

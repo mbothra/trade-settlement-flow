@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { useStore, selectDemoNow } from '../store/store';
+import { useStore } from '../store/store';
 import { StatusBadge, TradeStatusBadge } from './StatusBadge';
 import { obligationExplanation } from '../modules/netting';
 import { fmtDuration } from '../modules/reminders';
@@ -434,7 +434,21 @@ export function BatchDetail({ batchId }: { batchId: string }) {
 
   const reminderFocus      = useStore((s) => s.reminderFocus);
   const clearReminderFocus = useStore((s) => s.clearReminderFocus);
-  const demoNowMs          = useStore(selectDemoNow);
+
+  // The demo clock is an offset from real time (see modules/demoClock.ts),
+  // so "now" must be computed locally and ticked, never read via a selector
+  // that calls Date.now() itself: a selector returning a new value on every
+  // invocation makes Zustand's snapshot check see a "change" on every read,
+  // which forces a synchronous re-render → re-read → mismatch loop and trips
+  // React's "Maximum update depth exceeded" guard. NotificationCenter uses
+  // the same pattern for the same reason.
+  const clockOffset = useStore((s) => s.demoClockOffsetMs);
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const demoNowMs = tick + clockOffset;
 
   const [highlightedTradeIds,    setHighlightedTradeIds]    = useState<Set<string>>(new Set());
   const [showDiscrepancyModal,   setShowDiscrepancyModal]   = useState(false);
